@@ -1,0 +1,7 @@
+
+target/
+bin/
+.idea/
+src/main/resources/vec/
+src/main/resources/trainedModel/
+results/
