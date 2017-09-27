@@ -1,69 +1,67 @@
 package model;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.io.Writer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Random;
-
 import dataprepare.Data;
 import dataprepare.Funcs;
-import nn.libs.*;
-import nn.libs.combinedLayer.*;
 import evaluationMetric.Metric;
-import nn.SentenceEntityMemNN_Position_4;
+import nn.LSTM_SentenceEntityMemNN;
+import nn.libs.LinearLayer;
+import nn.libs.LookupLayer;
+import nn.libs.SoftmaxLayer;
+import nn.libs.TanhLayer;
+import nn.libs.combinedLayer.AttentionLayer;
+import nn.libs.combinedLayer.ConnectLinearTanh;
+import nn.libs.combinedLayer.SimplifiedLSTMLayer;
 
-public class EntityMemNN_Position_4_Main {
-	
+import java.io.*;
+import java.util.*;
+
+public class LSTM_EntityMemNNMain {
+
 	LookupLayer seedLookup;
 	ConnectLinearTanh attentionCellSeed;
-	LinearLayer entityTranformSeed;
+	TanhLayer entityTranformSeed;
 	LinearLayer linearForSoftmax;
 	SoftmaxLayer softmax;
+	SimplifiedLSTMLayer seedSimplifiedLSTM;
 	HashMap<String, Integer> wordVocab = null;
-	LookupLayer seedPositionLookup;
-	
+
 	HashMap<Integer, String> reverseWordVocab = null;
-	
-	public EntityMemNN_Position_4_Main(String modelFile) throws Exception
+
+	private LinearLayer xseedInputLinear;
+	private LinearLayer xseedForgetLinear;
+	private LinearLayer xseedCandidateStatelinear;
+
+	public LSTM_EntityMemNNMain(String modelFile) throws Exception
 	{
 		TmpClass_ tmpClass = loadModel(modelFile);
 		printArgs(tmpClass._argsMap);
-		
+
 		argsMap = tmpClass._argsMap;
-		
+
 		seedLookup = tmpClass._seedLookup;
 		attentionCellSeed = tmpClass._attentionCellSeed;
 		entityTranformSeed = tmpClass._entityTranformSeed;
 		linearForSoftmax = tmpClass._linearForSoftmax;
 		softmax = tmpClass._softmax;
-		
+		seedSimplifiedLSTM = tmpClass._seedSimplifiedLSTM;
+
 		// do not forget to link!
 		linearForSoftmax.link(softmax);
-		
+
 		wordVocab = tmpClass._wordVocab;
 		reverseWordVocab = new HashMap<Integer, String>();
 		for(String key: wordVocab.keySet())
 		{
 			reverseWordVocab.put(wordVocab.get(key), key);
 		}
-		seedPositionLookup = tmpClass._seedPositionLookup;
 	}
-	
-	public EntityMemNN_Position_4_Main() throws Exception
-	{ 
+
+	public LSTM_EntityMemNNMain() throws Exception
+	{
+		Random rnd = new Random();
+		int seed = Integer.parseInt(argsMap.get("-randomSeed"));
+		rnd.setSeed(seed);
+
 		int classNum = Integer.parseInt(argsMap.get("-classNum"));
 		String trainFile = argsMap.get("-trainFile");
 		String testFile  = argsMap.get("-testFile");
@@ -72,10 +70,7 @@ public class EntityMemNN_Position_4_Main {
 		double randomizeBase = Double.parseDouble(argsMap.get("-randomizeBase"));
 		double attentionCellRandomBase = Double.parseDouble(argsMap.get("-attentionCellRandomBase"));
 		double entityTransferRandomBase = Double.parseDouble(argsMap.get("-entityTransferRandomBase"));
-		
-		int positionThreshold = Integer.parseInt(argsMap.get("-positionThreshold"));
-		double positionRandomBase = Double.parseDouble(argsMap.get("-positionRandomBase"));
-		
+
 		HashSet<String> wordSet = new HashSet<String>();
 		loadData(trainFile, testFile, wordSet);		
 		
@@ -85,9 +80,8 @@ public class EntityMemNN_Position_4_Main {
 		
 		seedLookup = new LookupLayer(embeddingLength, wordVocab.size(), 1);
 		seedLookup.setEmbeddings(table);
-		
-		Random rnd = new Random(); 
-		
+
+
 		linearForSoftmax = new LinearLayer(embeddingLength, classNum);
 		linearForSoftmax.randomize(rnd, -1.0 * randomizeBase, randomizeBase);
 		
@@ -98,11 +92,18 @@ public class EntityMemNN_Position_4_Main {
 		attentionCellSeed = new ConnectLinearTanh(embeddingLength, embeddingLength, 1);
 		attentionCellSeed.randomize(rnd, -1.0 * attentionCellRandomBase, attentionCellRandomBase);
 		
-		entityTranformSeed = new LinearLayer(embeddingLength, embeddingLength);
+		entityTranformSeed = new TanhLayer(embeddingLength, embeddingLength);
 		entityTranformSeed.randomize(rnd, -1.0 * entityTransferRandomBase, entityTransferRandomBase);
-		
-		seedPositionLookup = new LookupLayer(embeddingLength, positionThreshold + 1, 1);
-		seedPositionLookup.randomize(rnd, -1.0 * positionRandomBase, positionRandomBase);
+
+		xseedInputLinear = new LinearLayer(embeddingLength * 2, embeddingLength);
+		xseedForgetLinear =  new LinearLayer(embeddingLength * 2, embeddingLength);
+		xseedCandidateStatelinear = new LinearLayer(embeddingLength * 2, embeddingLength);
+
+		xseedInputLinear.randomize(rnd, -1.0 * randomizeBase, randomizeBase);
+		xseedForgetLinear.randomize(rnd, -1.0 * randomizeBase, randomizeBase);
+		xseedCandidateStatelinear.randomize(rnd, -1.0 * randomizeBase, randomizeBase);
+
+		seedSimplifiedLSTM = new SimplifiedLSTMLayer(xseedInputLinear, xseedForgetLinear, xseedCandidateStatelinear, embeddingLength);
 	}
 	
 	List<Data> trainDataList;
@@ -138,7 +139,7 @@ public class EntityMemNN_Position_4_Main {
 				wordSet.add(target);
 			}
 		}
-		
+			
 		System.out.println("training size: " + trainDataList.size());
 		System.out.println("testDataList size: " + testDataList.size());
 		System.out.println("wordSet.size: " + wordSet.size());
@@ -152,8 +153,7 @@ public class EntityMemNN_Position_4_Main {
 		String modelFile = argsMap.get("-modelFile");
 		double learningRate = Double.parseDouble(argsMap.get("-learningRate"));
 		double probThreshold = Double.parseDouble(argsMap.get("-probThreshold"));
-		
-		int positionThreshold = Integer.parseInt(argsMap.get("-positionThreshold"));
+        int batchSize = Integer.parseInt(argsMap.get("-batchSize"));
 		
 		double lossV = 0.0;
 		int lossC = 0;
@@ -166,34 +166,11 @@ public class EntityMemNN_Position_4_Main {
 			Data data = trainDataList.get(idxData);
 			
 			String text = data.text;
+			text = text.replaceAll("\\$t\\$", "");
 			
-			int targetIdx = text.indexOf("$t$");
-			String forwText = text.substring(0, targetIdx);
-			String backText = text.substring(targetIdx + 3);
+			String[] words = text.split(" ");
 			
-			int[] forwWordIds = Funcs.fillSentence(forwText.split(" "), wordVocab);
-			int[] backWordIds = Funcs.fillSentence(backText.split(" "), wordVocab);
-			
-			int[] wordIds = new int[forwWordIds.length + backWordIds.length];
-			int[] wordPositions = new int[wordIds.length];
-			
-			for(int i = 0; i < forwWordIds.length; i++)
-			{
-				wordIds[i] = forwWordIds[i];
-				wordPositions[i] = forwWordIds.length - i;
-			}
-			
-			for(int i = 0; i < backWordIds.length; i++)
-			{
-				wordIds[forwWordIds.length + i] = backWordIds[i];
-				wordPositions[forwWordIds.length + i] = (i + 1);
-			}
-			
-			for(int i = 0; i < wordPositions.length; i++)
-			{
-				if(wordPositions[i] > positionThreshold)
-					wordPositions[i] = positionThreshold;
-			}
+			int[] wordIds = Funcs.fillSentence(words, wordVocab);
 			
 			// target word vec
 			double[] targetVec = new double[seedLookup.embeddingLength];
@@ -220,13 +197,12 @@ public class EntityMemNN_Position_4_Main {
 				targetVec[i] = targetVec[i] / targetIds.length;
 			}
 
-			SentenceEntityMemNN_Position_4 memNN = new SentenceEntityMemNN_Position_4(
+			LSTM_SentenceEntityMemNN memNN = new LSTM_SentenceEntityMemNN(
 					wordIds,
-					seedPositionLookup,
-					wordPositions,
 					seedLookup,
 					attentionCellSeed,
 					entityTranformSeed,
+					seedSimplifiedLSTM,
 					targetVec,
 					numberOfHops);
 			
@@ -262,18 +238,18 @@ public class EntityMemNN_Position_4_Main {
 			memNN.backward();
 			
 			// update
-//			linearForSoftmax.update(learningRate);
-//			memNN.update(learningRate);
+			linearForSoftmax.update(learningRate);
+			memNN.update(learningRate);
 			
-			linearForSoftmax.updateAdaGrad(learningRate, 1);
-			memNN.updateAdaGrad(learningRate, 1);
+//			linearForSoftmax.updateAdaGrad(learningRate, 1);
+//			memNN.updateAdaGrad(learningRate, 1);
 			
 			// clearGrad
 			memNN.clearGrad();
 			linearForSoftmax.clearGrad();
 			softmax.clearGrad();
 
-			if(idxData % 500 == 0)
+			if(idxData % batchSize == 0)
 			{
 				System.out.println("running idxData = " + idxData + "/" + trainDataList.size() + "\t "
 						+ "lossV/lossC = " + String.format("%.4f", lossV) + "/" + lossC + "\t"
@@ -287,7 +263,7 @@ public class EntityMemNN_Position_4_Main {
 		return modelFile + "-" + round + ".model";
 	}
 
-	public void predict(String modelFile) throws Exception
+	public double predict(String modelFile) throws Exception
 	{
 		String testFile = argsMap.get("-testFile");
 		List<Data> testDataList = Funcs.loadCorpus(testFile, "utf8");
@@ -299,115 +275,70 @@ public class EntityMemNN_Position_4_Main {
 		int numberOfHops = Integer.parseInt(argsMap.get("-numberOfHops"));
 		double accuracyThreshold = Double.parseDouble(argsMap.get("-accuracyThreshold"));
 		
-		int positionThreshold = Integer.parseInt(argsMap.get("-positionThreshold"));
-		
 		System.out.println("===========start to predict===============");
 		
 		List<Integer> goldList = new ArrayList<Integer>();
 		List<Integer> predList = new ArrayList<Integer>();
 		
-		for(int idxData = 0; idxData < testDataList.size(); idxData++)
-		{
+		for(int idxData = 0; idxData < testDataList.size(); idxData++) {
 			Data data = testDataList.get(idxData);
-			
+
 			String text = data.text;
-			
-			int targetIdx = text.indexOf("$t$");
-			String forwText = text.substring(0, targetIdx);
-			String backText = text.substring(targetIdx + 3);
-			
-			int[] forwWordIds = Funcs.fillSentence(forwText.split(" "), wordVocab);
-			int[] backWordIds = Funcs.fillSentence(backText.split(" "), wordVocab);
-			
-			int[] wordIds = new int[forwWordIds.length + backWordIds.length];
-			int[] wordPositions = new int[wordIds.length];
-			
-			for(int i = 0; i < forwWordIds.length; i++)
-			{
-				wordIds[i] = forwWordIds[i];
-				wordPositions[i] = forwWordIds.length - i;
-			}
-			
-			for(int i = 0; i < backWordIds.length; i++)
-			{
-				wordIds[forwWordIds.length + i] = backWordIds[i];
-				wordPositions[forwWordIds.length + i] = (i + 1);
-			}
-			
-			for(int i = 0; i < wordPositions.length; i++)
-			{
-				if(wordPositions[i] > positionThreshold)
-					wordPositions[i] = positionThreshold;
-			}
-			
+			text = text.replaceAll("\\$t\\$", "");
+
+			String[] words = text.split(" ");
+			int[] wordIds = Funcs.fillSentence(words, wordVocab);
+
 			// target word vec
 			double[] targetVec = new double[seedLookup.embeddingLength];
 			String[] targetWords = data.target.split(" ");
 			int[] targetIds = Funcs.fillSentence(targetWords, wordVocab);
-			
-			if(targetIds.length == 0 || wordIds.length == 0)
-			{
+
+			if (targetIds.length == 0 || wordIds.length == 0) {
 //				System.err.println("targetIds.length == 0 || forwWordIds.length == 0");
 				continue;
 			}
-			
-			for(int id: targetIds)
-			{
+
+			for (int id : targetIds) {
 				double[] xVec = seedLookup.table[id];
-				for(int i = 0; i < xVec.length; i++)
-				{
+				for (int i = 0; i < xVec.length; i++) {
 					targetVec[i] += xVec[i];
 				}
 			}
-			
-			for(int i = 0; i < targetVec.length; i++)
-			{
+
+			for (int i = 0; i < targetVec.length; i++) {
 				targetVec[i] = targetVec[i] / targetIds.length;
 			}
-			
-			SentenceEntityMemNN_Position_4 memNN = new SentenceEntityMemNN_Position_4(
+
+			LSTM_SentenceEntityMemNN memNN = new LSTM_SentenceEntityMemNN(
 					wordIds,
-					seedPositionLookup,
-					wordPositions,
 					seedLookup,
 					attentionCellSeed,
 					entityTranformSeed,
+					seedSimplifiedLSTM,
 					targetVec,
 					numberOfHops);
-			
+
 			// link. important.
 			memNN.link(linearForSoftmax);
-			
+
 			memNN.forward();
 			linearForSoftmax.forward();
 			softmax.forward();
-			
+
 			int predClass = -1;
 			double maxPredProb = -1.0;
-			for(int ii = 0; ii < softmax.length; ii++)
-			{
-				if(softmax.output[ii] > maxPredProb)
-				{
+			for (int ii = 0; ii < softmax.length; ii++) {
+				if (softmax.output[ii] > maxPredProb) {
 					maxPredProb = softmax.output[ii];
 					predClass = ii;
 				}
 			}
-			
+
 			predList.add(predClass);
 			goldList.add(data.goldPol);
-			
-//			dumpAttentionWeights(
-//					memNN, 
-//					reverseWordVocab, 
-//					data.text, 
-//					data.target, 
-//					wordIds, 
-//					targetIds,
-//					predClass,
-//					data.goldPol,
-//					writer);
 		}
-//		writer.close();
+
 		double accuracy = Metric.calcMetric(goldList, predList);
 		
 		if(accuracy < accuracyThreshold)
@@ -415,8 +346,9 @@ public class EntityMemNN_Position_4_Main {
 			File tmpModel = new File(modelFile);
 			tmpModel.delete();
 		}
-		
+
 		System.out.println("============== finish predicting =================");
+		return accuracy;
 	}
 
 	static HashMap<String, String> argsMap = null;
@@ -461,7 +393,7 @@ public class EntityMemNN_Position_4_Main {
 		linearForSoftmax.dumpToStream(bw);
 		softmax.dumpToStream(bw);
 		attentionCellSeed.dumpToStream(bw);
-		seedPositionLookup.dumpToStream(bw);
+		seedSimplifiedLSTM.dumpToStream(bw);
 	}
 	
 	class TmpClass_{
@@ -471,8 +403,8 @@ public class EntityMemNN_Position_4_Main {
 		LinearLayer _linearForSoftmax;
 		SoftmaxLayer _softmax;
 		ConnectLinearTanh _attentionCellSeed;
-		LinearLayer _entityTranformSeed;
-		LookupLayer _seedPositionLookup;
+		TanhLayer _entityTranformSeed;
+		SimplifiedLSTMLayer _seedSimplifiedLSTM;
 		
 		public TmpClass_(BufferedReader br) throws Exception
 		{
@@ -504,11 +436,11 @@ public class EntityMemNN_Position_4_Main {
 			}
 			
 			_seedLookup = LookupLayer.loadFromStream(br);
-			_entityTranformSeed = LinearLayer.loadFromStream(br);
+			_entityTranformSeed = TanhLayer.loadFromStream(br);
 			_linearForSoftmax = LinearLayer.loadFromStream(br);
 			_softmax = SoftmaxLayer.loadFromStream(br);
 			_attentionCellSeed = ConnectLinearTanh.loadFromStream(br);
-			_seedPositionLookup = LookupLayer.loadFromStream(br);
+			_seedSimplifiedLSTM = SimplifiedLSTMLayer.loadFromStream(br);
 		}
 	}
 	
@@ -524,7 +456,7 @@ public class EntityMemNN_Position_4_Main {
 		return tmpClass;
 	}
 	
-	public void dumpAttentionWeights(SentenceEntityMemNN_Position_4 memNN,
+	public void dumpAttentionWeights(LSTM_SentenceEntityMemNN memNN,
 			HashMap<Integer, String> _reverseWordVocabMap,
 			String orgText,
 			String targetText,
@@ -570,17 +502,26 @@ public class EntityMemNN_Position_4_Main {
 		argsMap = Funcs.parseArgs(args);
 		printArgs(argsMap);
 
-		EntityMemNN_Position_4_Main main = new EntityMemNN_Position_4_Main();
-		int roundNum = Integer.parseInt(argsMap.get("-roundNum"));
-		
-		for(int round = 1; round <= roundNum; round++)
-		{
-			String modelFile = main.train(round);
-			main.predict(modelFile);
-		}
-		
-//		String modelFile = "model/Restaurant-hop8-position-4-new-model1--132.model";
-//		EntityMemNN_Position_4_Main main = new EntityMemNN_Position_4_Main(modelFile);
-//		main.predict(modelFile);
+//		LSTM_EntityMemNNMain main = new LSTM_EntityMemNNMain();
+//		int roundNum = Integer.parseInt(argsMap.get("-roundNum"));
+//		double accuracy = 0.0;
+//		double bestAcc = 0.0;
+//		String bestModelFile = "";
+//
+//		for(int round = 1; round <= roundNum; round++)
+//		{
+//			String modelFile = main.train(round);
+//			accuracy = main.predict(modelFile);
+//			if(bestAcc < accuracy) {
+//				bestAcc = accuracy;
+//				bestModelFile = modelFile;
+//			}
+//			System.out.println("The best accuracy:" + String.format("%.4f", bestAcc) + " - Model file:" + bestModelFile);
+//		}
+//		System.out.println("The best accuracy:" + String.format("%.4f", bestAcc) + " - Model file:" + bestModelFile);
+
+		String modelFile = "./target/classes/trainedModel/model-6-res-8hops-81.04.model";
+		LSTM_EntityMemNNMain main = new LSTM_EntityMemNNMain(modelFile);
+		main.predict(modelFile);
 	}
 }

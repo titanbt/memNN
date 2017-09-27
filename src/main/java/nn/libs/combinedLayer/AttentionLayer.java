@@ -17,7 +17,7 @@ public class AttentionLayer implements NNInterface{
 	public double[] inputG;
 	public double[] contextGs;
 	
-	List<NNInterface> attentionCells;
+	public List<NNInterface> attentionCells;
 	MultiConnectLayer attentionConnect;
 	public SoftmaxLayer attentionSoftmax;
 	
@@ -138,7 +138,7 @@ public class AttentionLayer implements NNInterface{
 				((double[]) attentionCells.get(i).getInputG(1) )[j] += 
 						outputG[j] * attentionSoftmax.output[i];
 				
-				contextGs[k] += ((double[]) attentionCells.get(i).getInputG(1) )[j];
+				contextGs[k] += ((double[]) attentionCells.get(i).getInputG(1))[j];
 				k++;
 			}
 		}

@@ -1,69 +1,60 @@
 package model;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.io.Writer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Random;
-
 import dataprepare.Data;
 import dataprepare.Funcs;
-import nn.libs.*;
-import nn.libs.combinedLayer.*;
 import evaluationMetric.Metric;
-import nn.SentenceEntityMemNN_Position_4;
+import nn.SentenceDeepMemNN_sigmod;
+import nn.libs.LinearLayer;
+import nn.libs.LookupLayer;
+import nn.libs.SoftmaxLayer;
+import nn.libs.SigmoidLayer;
+import nn.libs.combinedLayer.AttentionLayer;
+import nn.libs.combinedLayer.ConnectLinearTanh;
 
-public class EntityMemNN_Position_4_Main {
-	
+import java.io.*;
+import java.util.*;
+
+public class DeepMemNNMain_sigmod {
+
 	LookupLayer seedLookup;
 	ConnectLinearTanh attentionCellSeed;
-	LinearLayer entityTranformSeed;
+	SigmoidLayer entityTranformSeed;
 	LinearLayer linearForSoftmax;
 	SoftmaxLayer softmax;
 	HashMap<String, Integer> wordVocab = null;
-	LookupLayer seedPositionLookup;
-	
+
 	HashMap<Integer, String> reverseWordVocab = null;
-	
-	public EntityMemNN_Position_4_Main(String modelFile) throws Exception
+
+	public DeepMemNNMain_sigmod(String modelFile) throws Exception
 	{
 		TmpClass_ tmpClass = loadModel(modelFile);
 		printArgs(tmpClass._argsMap);
-		
+
 		argsMap = tmpClass._argsMap;
-		
+
 		seedLookup = tmpClass._seedLookup;
 		attentionCellSeed = tmpClass._attentionCellSeed;
 		entityTranformSeed = tmpClass._entityTranformSeed;
 		linearForSoftmax = tmpClass._linearForSoftmax;
 		softmax = tmpClass._softmax;
-		
+
 		// do not forget to link!
 		linearForSoftmax.link(softmax);
-		
+
 		wordVocab = tmpClass._wordVocab;
 		reverseWordVocab = new HashMap<Integer, String>();
 		for(String key: wordVocab.keySet())
 		{
 			reverseWordVocab.put(wordVocab.get(key), key);
 		}
-		seedPositionLookup = tmpClass._seedPositionLookup;
 	}
-	
-	public EntityMemNN_Position_4_Main() throws Exception
-	{ 
+
+	public DeepMemNNMain_sigmod() throws Exception
+	{
+		Random rnd = new Random();
+		int seed = Integer.parseInt(argsMap.get("-randomSeed"));
+		rnd.setSeed(seed);
+
 		int classNum = Integer.parseInt(argsMap.get("-classNum"));
 		String trainFile = argsMap.get("-trainFile");
 		String testFile  = argsMap.get("-testFile");
@@ -72,10 +63,7 @@ public class EntityMemNN_Position_4_Main {
 		double randomizeBase = Double.parseDouble(argsMap.get("-randomizeBase"));
 		double attentionCellRandomBase = Double.parseDouble(argsMap.get("-attentionCellRandomBase"));
 		double entityTransferRandomBase = Double.parseDouble(argsMap.get("-entityTransferRandomBase"));
-		
-		int positionThreshold = Integer.parseInt(argsMap.get("-positionThreshold"));
-		double positionRandomBase = Double.parseDouble(argsMap.get("-positionRandomBase"));
-		
+
 		HashSet<String> wordSet = new HashSet<String>();
 		loadData(trainFile, testFile, wordSet);		
 		
@@ -85,9 +73,8 @@ public class EntityMemNN_Position_4_Main {
 		
 		seedLookup = new LookupLayer(embeddingLength, wordVocab.size(), 1);
 		seedLookup.setEmbeddings(table);
-		
-		Random rnd = new Random(); 
-		
+
+
 		linearForSoftmax = new LinearLayer(embeddingLength, classNum);
 		linearForSoftmax.randomize(rnd, -1.0 * randomizeBase, randomizeBase);
 		
@@ -98,11 +85,8 @@ public class EntityMemNN_Position_4_Main {
 		attentionCellSeed = new ConnectLinearTanh(embeddingLength, embeddingLength, 1);
 		attentionCellSeed.randomize(rnd, -1.0 * attentionCellRandomBase, attentionCellRandomBase);
 		
-		entityTranformSeed = new LinearLayer(embeddingLength, embeddingLength);
+		entityTranformSeed = new SigmoidLayer(embeddingLength, embeddingLength);
 		entityTranformSeed.randomize(rnd, -1.0 * entityTransferRandomBase, entityTransferRandomBase);
-		
-		seedPositionLookup = new LookupLayer(embeddingLength, positionThreshold + 1, 1);
-		seedPositionLookup.randomize(rnd, -1.0 * positionRandomBase, positionRandomBase);
 	}
 	
 	List<Data> trainDataList;
@@ -138,7 +122,7 @@ public class EntityMemNN_Position_4_Main {
 				wordSet.add(target);
 			}
 		}
-		
+			
 		System.out.println("training size: " + trainDataList.size());
 		System.out.println("testDataList size: " + testDataList.size());
 		System.out.println("wordSet.size: " + wordSet.size());
@@ -152,8 +136,7 @@ public class EntityMemNN_Position_4_Main {
 		String modelFile = argsMap.get("-modelFile");
 		double learningRate = Double.parseDouble(argsMap.get("-learningRate"));
 		double probThreshold = Double.parseDouble(argsMap.get("-probThreshold"));
-		
-		int positionThreshold = Integer.parseInt(argsMap.get("-positionThreshold"));
+        int batchSize = Integer.parseInt(argsMap.get("-batchSize"));
 		
 		double lossV = 0.0;
 		int lossC = 0;
@@ -166,34 +149,11 @@ public class EntityMemNN_Position_4_Main {
 			Data data = trainDataList.get(idxData);
 			
 			String text = data.text;
+			text = text.replaceAll("\\$t\\$", "");
 			
-			int targetIdx = text.indexOf("$t$");
-			String forwText = text.substring(0, targetIdx);
-			String backText = text.substring(targetIdx + 3);
+			String[] words = text.split(" ");
 			
-			int[] forwWordIds = Funcs.fillSentence(forwText.split(" "), wordVocab);
-			int[] backWordIds = Funcs.fillSentence(backText.split(" "), wordVocab);
-			
-			int[] wordIds = new int[forwWordIds.length + backWordIds.length];
-			int[] wordPositions = new int[wordIds.length];
-			
-			for(int i = 0; i < forwWordIds.length; i++)
-			{
-				wordIds[i] = forwWordIds[i];
-				wordPositions[i] = forwWordIds.length - i;
-			}
-			
-			for(int i = 0; i < backWordIds.length; i++)
-			{
-				wordIds[forwWordIds.length + i] = backWordIds[i];
-				wordPositions[forwWordIds.length + i] = (i + 1);
-			}
-			
-			for(int i = 0; i < wordPositions.length; i++)
-			{
-				if(wordPositions[i] > positionThreshold)
-					wordPositions[i] = positionThreshold;
-			}
+			int[] wordIds = Funcs.fillSentence(words, wordVocab);
 			
 			// target word vec
 			double[] targetVec = new double[seedLookup.embeddingLength];
@@ -220,10 +180,8 @@ public class EntityMemNN_Position_4_Main {
 				targetVec[i] = targetVec[i] / targetIds.length;
 			}
 
-			SentenceEntityMemNN_Position_4 memNN = new SentenceEntityMemNN_Position_4(
+			SentenceDeepMemNN_sigmod memNN = new SentenceDeepMemNN_sigmod(
 					wordIds,
-					seedPositionLookup,
-					wordPositions,
 					seedLookup,
 					attentionCellSeed,
 					entityTranformSeed,
@@ -262,18 +220,18 @@ public class EntityMemNN_Position_4_Main {
 			memNN.backward();
 			
 			// update
-//			linearForSoftmax.update(learningRate);
-//			memNN.update(learningRate);
+			linearForSoftmax.update(learningRate);
+			memNN.update(learningRate);
 			
-			linearForSoftmax.updateAdaGrad(learningRate, 1);
-			memNN.updateAdaGrad(learningRate, 1);
+//			linearForSoftmax.updateAdaGrad(learningRate, 300);
+//			memNN.updateAdaGrad(learningRate, 300);
 			
 			// clearGrad
 			memNN.clearGrad();
 			linearForSoftmax.clearGrad();
 			softmax.clearGrad();
 
-			if(idxData % 500 == 0)
+			if(idxData % batchSize == 0)
 			{
 				System.out.println("running idxData = " + idxData + "/" + trainDataList.size() + "\t "
 						+ "lossV/lossC = " + String.format("%.4f", lossV) + "/" + lossC + "\t"
@@ -287,7 +245,7 @@ public class EntityMemNN_Position_4_Main {
 		return modelFile + "-" + round + ".model";
 	}
 
-	public void predict(String modelFile) throws Exception
+	public double predict(String modelFile) throws Exception
 	{
 		String testFile = argsMap.get("-testFile");
 		List<Data> testDataList = Funcs.loadCorpus(testFile, "utf8");
@@ -299,8 +257,6 @@ public class EntityMemNN_Position_4_Main {
 		int numberOfHops = Integer.parseInt(argsMap.get("-numberOfHops"));
 		double accuracyThreshold = Double.parseDouble(argsMap.get("-accuracyThreshold"));
 		
-		int positionThreshold = Integer.parseInt(argsMap.get("-positionThreshold"));
-		
 		System.out.println("===========start to predict===============");
 		
 		List<Integer> goldList = new ArrayList<Integer>();
@@ -311,34 +267,10 @@ public class EntityMemNN_Position_4_Main {
 			Data data = testDataList.get(idxData);
 			
 			String text = data.text;
+			text = text.replaceAll("$t$", "");
 			
-			int targetIdx = text.indexOf("$t$");
-			String forwText = text.substring(0, targetIdx);
-			String backText = text.substring(targetIdx + 3);
-			
-			int[] forwWordIds = Funcs.fillSentence(forwText.split(" "), wordVocab);
-			int[] backWordIds = Funcs.fillSentence(backText.split(" "), wordVocab);
-			
-			int[] wordIds = new int[forwWordIds.length + backWordIds.length];
-			int[] wordPositions = new int[wordIds.length];
-			
-			for(int i = 0; i < forwWordIds.length; i++)
-			{
-				wordIds[i] = forwWordIds[i];
-				wordPositions[i] = forwWordIds.length - i;
-			}
-			
-			for(int i = 0; i < backWordIds.length; i++)
-			{
-				wordIds[forwWordIds.length + i] = backWordIds[i];
-				wordPositions[forwWordIds.length + i] = (i + 1);
-			}
-			
-			for(int i = 0; i < wordPositions.length; i++)
-			{
-				if(wordPositions[i] > positionThreshold)
-					wordPositions[i] = positionThreshold;
-			}
+			String[] words = text.split(" ");
+			int[] wordIds = Funcs.fillSentence(words, wordVocab);
 			
 			// target word vec
 			double[] targetVec = new double[seedLookup.embeddingLength];
@@ -364,11 +296,9 @@ public class EntityMemNN_Position_4_Main {
 			{
 				targetVec[i] = targetVec[i] / targetIds.length;
 			}
-			
-			SentenceEntityMemNN_Position_4 memNN = new SentenceEntityMemNN_Position_4(
+
+			SentenceDeepMemNN_sigmod memNN = new SentenceDeepMemNN_sigmod(
 					wordIds,
-					seedPositionLookup,
-					wordPositions,
 					seedLookup,
 					attentionCellSeed,
 					entityTranformSeed,
@@ -415,8 +345,9 @@ public class EntityMemNN_Position_4_Main {
 			File tmpModel = new File(modelFile);
 			tmpModel.delete();
 		}
-		
+
 		System.out.println("============== finish predicting =================");
+		return accuracy;
 	}
 
 	static HashMap<String, String> argsMap = null;
@@ -461,7 +392,6 @@ public class EntityMemNN_Position_4_Main {
 		linearForSoftmax.dumpToStream(bw);
 		softmax.dumpToStream(bw);
 		attentionCellSeed.dumpToStream(bw);
-		seedPositionLookup.dumpToStream(bw);
 	}
 	
 	class TmpClass_{
@@ -471,8 +401,7 @@ public class EntityMemNN_Position_4_Main {
 		LinearLayer _linearForSoftmax;
 		SoftmaxLayer _softmax;
 		ConnectLinearTanh _attentionCellSeed;
-		LinearLayer _entityTranformSeed;
-		LookupLayer _seedPositionLookup;
+		SigmoidLayer _entityTranformSeed;
 		
 		public TmpClass_(BufferedReader br) throws Exception
 		{
@@ -504,11 +433,10 @@ public class EntityMemNN_Position_4_Main {
 			}
 			
 			_seedLookup = LookupLayer.loadFromStream(br);
-			_entityTranformSeed = LinearLayer.loadFromStream(br);
+			_entityTranformSeed = SigmoidLayer.loadFromStream(br);
 			_linearForSoftmax = LinearLayer.loadFromStream(br);
 			_softmax = SoftmaxLayer.loadFromStream(br);
 			_attentionCellSeed = ConnectLinearTanh.loadFromStream(br);
-			_seedPositionLookup = LookupLayer.loadFromStream(br);
 		}
 	}
 	
@@ -524,7 +452,7 @@ public class EntityMemNN_Position_4_Main {
 		return tmpClass;
 	}
 	
-	public void dumpAttentionWeights(SentenceEntityMemNN_Position_4 memNN,
+	public void dumpAttentionWeights(SentenceDeepMemNN_sigmod memNN,
 			HashMap<Integer, String> _reverseWordVocabMap,
 			String orgText,
 			String targetText,
@@ -570,17 +498,26 @@ public class EntityMemNN_Position_4_Main {
 		argsMap = Funcs.parseArgs(args);
 		printArgs(argsMap);
 
-		EntityMemNN_Position_4_Main main = new EntityMemNN_Position_4_Main();
+		DeepMemNNMain_sigmod main = new DeepMemNNMain_sigmod();
 		int roundNum = Integer.parseInt(argsMap.get("-roundNum"));
-		
+		double accuracy = 0.0;
+		double bestAcc = 0.0;
+		String bestModelFile = "";
+
 		for(int round = 1; round <= roundNum; round++)
 		{
 			String modelFile = main.train(round);
-			main.predict(modelFile);
+			accuracy = main.predict(modelFile);
+			if(bestAcc < accuracy) {
+				bestAcc = accuracy;
+				bestModelFile = modelFile;
+			}
+			System.out.println("The best accuracy:" + String.format("%.4f", bestAcc));
 		}
+		System.out.println("The best accuracy:" + String.format("%.4f", bestAcc) + " - Model file:" + bestModelFile);
 		
-//		String modelFile = "model/Restaurant-hop8-position-4-new-model1--132.model";
-//		EntityMemNN_Position_4_Main main = new EntityMemNN_Position_4_Main(modelFile);
+//		String modelFile = "model/Restaurant-hop9-model1--12.model";
+//		EntityMemNNMain main = new EntityMemNNMain(modelFile);
 //		main.predict(modelFile);
 	}
 }

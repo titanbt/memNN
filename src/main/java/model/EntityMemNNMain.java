@@ -201,7 +201,7 @@ public class EntityMemNNMain {
 			Data data = trainDataList.get(idxData);
 			
 			String text = data.text;
-			text = text.replaceAll("$t$", "");
+			text = text.replaceAll("\\$t\\$", "");
 			
 			String[] words = text.split(" ");
 			
@@ -275,8 +275,8 @@ public class EntityMemNNMain {
 			linearForSoftmax.update(learningRate);
 			memNN.update(learningRate);
 			
-//			linearForSoftmax.updateAdaGrad(learningRate, 1);
-//			memNN.updateAdaGrad(learningRate, 1);
+//			linearForSoftmax.updateAdaGrad(learningRate, 300);
+//			memNN.updateAdaGrad(learningRate, 300);
 			
 			// clearGrad
 			memNN.clearGrad();

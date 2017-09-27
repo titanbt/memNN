@@ -1,5 +1,8 @@
 package nn.libs.combinedLayer;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.Writer;
 import java.util.Random;
 
 import nn.libs.LinearLayer;
@@ -19,7 +22,29 @@ public class LinearTanh implements NNInterface{
 	public LinearTanh()
 	{
 	}
-	
+
+	public void dumpToStream(Writer bw) throws IOException
+	{
+		linear.dumpToStream(bw);
+		tanh.dumpToStream(bw);
+	}
+
+	public static LinearTanh loadFromStream(BufferedReader br)
+			throws Exception
+	{
+		LinearLayer _linear1 = LinearLayer.loadFromStream(br);
+		TanhLayer _tanh = TanhLayer.loadFromStream(br);
+
+		LinearTanh layer = new LinearTanh();
+
+		layer.linear = (LinearLayer) _linear1.cloneWithTiedParams();
+		layer.tanh = (TanhLayer) _tanh.cloneWithTiedParams();
+
+		layer.linear.link(layer.tanh);
+
+		return layer;
+	}
+
 	public LinearTanh(int xInputLength, int xOutputLength) 
 			throws Exception
 	{
@@ -34,11 +59,11 @@ public class LinearTanh implements NNInterface{
 		linkId = 0;
 	}
 	
-//	public void randomize()
-//	{
-//		Random rnd = new Random();
-//		linear.randomize(rnd, -0.01 / linear.inputLength, 0.01 / linear.inputLength);
-//	}
+	public void randomize()
+	{
+		Random rnd = new Random();
+		linear.randomize(rnd, -0.01 / linear.inputLength, 0.01 / linear.inputLength);
+	}
 	
 	public void forward()
 	{

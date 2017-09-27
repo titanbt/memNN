@@ -12,7 +12,7 @@ setenv PATH ${PBS_O_PATH}
 
 root="./target/classes"
 
-java -Xmx8g -cp $root model.EntityMemNNMain \
+java -Xmx8g -cp $root model.DeepMemNNMain_InnerProduct \
 -embeddingLength 300 \
 -roundNum 300 \
 -classNum 3 \
@@ -28,12 +28,12 @@ java -Xmx8g -cp $root model.EntityMemNNMain \
 -entityTransferRandomBase 0.01 \
 -probThreshold 0.05 \
 -numberOfHops 9 \
--learningRate 0.01 \
+-learningRate 0.001 \
 -isContainTargetInContext true \
 -isNormLookup false \
 -entityTransIdentityORlinear linear \
 -batchSize 500 \
--randomSeed 1199 \
+-randomSeed 2000 \
 -trainedModel $root/trainedModel/Restaurant-hop9-model1--12.model \
 
 

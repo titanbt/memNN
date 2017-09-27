@@ -12,7 +12,7 @@ setenv PATH ${PBS_O_PATH}
 
 root="./target/classes"
 
-java -Xmx8g -cp $root model.EntityMemNNMain \
+java -Xmx8g -cp $root model.DeepMemNNMain_sigmod \
 -embeddingLength 300 \
 -roundNum 300 \
 -classNum 3 \
@@ -21,19 +21,19 @@ java -Xmx8g -cp $root model.EntityMemNNMain \
 -testFile $root/data/semeval14/Laptops_Test_Gold.xml.seg \
 -embeddingFile $root/vec/glove.42B.300d.txt \
 -clippingThreshold 100 \
--randomizeBase 0.01 \
+-randomizeBase 0.1 \
 -modelFile ./results/laptop/model \
--attentionCellRandomBase 0.01 \
+-attentionCellRandomBase 0.1 \
 -attentionCellInnerORlinear linear \
--entityTransferRandomBase 0.01 \
+-entityTransferRandomBase 0.1 \
 -probThreshold 0.05 \
 -numberOfHops 9 \
--learningRate 0.01 \
+-learningRate 0.001 \
 -isContainTargetInContext true \
 -isNormLookup false \
 -entityTransIdentityORlinear linear \
 -batchSize 500 \
--randomSeed 1199 \
+-randomSeed 2000 \
 -trainedModel $root/trainedModel/Restaurant-hop9-model1--12.model \
 
 
